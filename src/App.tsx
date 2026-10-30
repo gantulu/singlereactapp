@@ -402,14 +402,28 @@ export const AppProvider = ({ children }) => {
     const chosenColor = color || (product.colors ? product.colors[0] : "");
     const chosenSize = size || (product.sizes ? product.sizes[0] : "");
 
+    if (product.availability && product.availability !== "available") {
+      triggerToast("This product is currently unavailable");
+      return;
+    }
+
     setCart((prevCart) => {
       const idx = prevCart.findIndex(
         (item) => item.product.id === product.id && item.selectedColor === chosenColor && item.selectedSize === chosenSize
       );
       if (idx > -1) {
         const next = [...prevCart];
-        next[idx].quantity += quantity;
+        const nextQuantity = next[idx].quantity + quantity;
+        if (product.stock > 0 && nextQuantity > product.stock) {
+          triggerToast("Requested quantity exceeds available stock");
+          return prevCart;
+        }
+        next[idx].quantity = nextQuantity;
         return next;
+      }
+      if (product.stock > 0 && quantity > product.stock) {
+        triggerToast("Requested quantity exceeds available stock");
+        return prevCart;
       }
       return [...prevCart, { product, quantity, selectedColor: chosenColor, selectedSize: chosenSize }];
     });
@@ -585,7 +599,8 @@ const ProductCard = ({ product }) => {
 
           <button
             onClick={() => addToCart(product)}
-            className="w-full py-2 bg-slate-900 dark:bg-slate-100 hover:bg-orange-600 dark:hover:bg-orange-500 text-white dark:text-slate-900 hover:text-white dark:hover:text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+            disabled={product.availability && product.availability !== "available"}
+            className="w-full py-2 bg-slate-900 dark:bg-slate-100 hover:bg-orange-600 dark:hover:bg-orange-500 text-white dark:text-slate-900 hover:text-white dark:hover:text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <ShoppingCart className="w-3.5 h-3.5" /> Add to Cart
           </button>
@@ -861,17 +876,13 @@ const HomePage = () => {
 // --- B. CATEGORY & PRODUCT LISTING PAGE ---
 const ProductListingPage = () => {
   const { selectedCategory, setSelectedCategory, navigateTo, products, categories, searchQuery, productsLoading, productsError, retryProducts } = useApp();
-  const [sortBy, setSortBy] = useState("popular");
-  const [priceRange, setPriceRange] = useState(5000000);
-
   const filtered = products.filter((p) => {
     const catMatch = selectedCategory === "All" || p.category === selectedCategory;
-    const priceMatch = p.price <= priceRange;
     const query = searchQuery.trim().toLowerCase();
     const searchMatch = !query || [p.name, p.brand, p.category].some((value) =>
       String(value || "").toLowerCase().includes(query)
     );
-    return catMatch && priceMatch && searchMatch;
+    return catMatch && searchMatch;
   });
 
   return (
@@ -916,7 +927,6 @@ const ProductListingPage = () => {
           <button
             onClick={() => {
               setSelectedCategory("All");
-              setPriceRange(5000000);
             }}
             className="px-4 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-xl text-xs font-bold"
           >
@@ -937,14 +947,17 @@ const ProductListingPage = () => {
 // --- C. PRODUCT DETAIL PAGE ---
 const ProductDetailPage = () => {
   const { selectedProduct, products, addToCart, navigateTo, toggleWishlist, wishlist } = useApp();
-  const product = selectedProduct || products[0];
-  if (!product) return <div className="py-16 text-center text-sm text-slate-500">Product details are unavailable.</div>;
+  const product = selectedProduct || products[0] || MOCK_PRODUCTS[0];
   const [selectedImg, setSelectedImg] = useState(product.images[0]);
   const [selectedColor, setSelectedColor] = useState(product.colors ? product.colors[0] : "");
   const [selectedSize, setSelectedSize] = useState(product.sizes ? product.sizes[0] : "");
   const [qty, setQty] = useState(1);
 
   const isWishlisted = wishlist.includes(product.id);
+
+  if (!selectedProduct && products.length === 0) {
+    return <div className="py-16 text-center text-sm text-slate-500">Product details are unavailable.</div>;
+  }
 
   return (
     <div className="space-y-8 pb-20">
@@ -992,7 +1005,9 @@ const ProductDetailPage = () => {
               <span>•</span>
               <span>{product.reviewCount} verified reviews</span>
               <span>•</span>
-              <span className="text-emerald-600 font-bold">In Stock ({product.stock})</span>
+              <span className={product.availability === "available" ? "text-emerald-600 font-bold" : "text-red-600 font-bold"}>
+                {product.availability === "available" ? `In Stock (${product.stock})` : "Out of Stock"}
+              </span>
             </div>
           </div>
 
