@@ -1,4 +1,5 @@
 import React, { useState, useEffect, createContext, useContext } from "react";
+import { getProducts } from "./services/productApi";
 import {
   ShoppingCart,
   Heart,
@@ -274,9 +275,40 @@ const formatIDR = (price) => {
 
 const AppContext = createContext(null);
 
+const mapApiProduct = (product) => ({
+  id: product.id,
+  name: product.title,
+  slug: product.sku || product.id,
+  brand: product.brand || "Unbranded",
+  category: product.category || "Other",
+  description: product.description || "",
+  price: Number(product.price) || 0,
+  // sale_price is intentionally not mapped to the UI's crossed-out price
+  // until its business meaning is confirmed by the API owner.
+  originalPrice: null,
+  discount: 0,
+  rating: null,
+  reviewCount: null,
+  images: [
+    product.image_url,
+    ...(Array.isArray(product.additional_image_urls) ? product.additional_image_urls : [])
+  ].filter(Boolean).length
+    ? [product.image_url, ...(Array.isArray(product.additional_image_urls) ? product.additional_image_urls : [])].filter(Boolean)
+    : ["https://placehold.co/600x600?text=No+Image"],
+  colors: Array.isArray(product.colors) ? product.colors : [],
+  sizes: Array.isArray(product.sizes) ? product.sizes : [],
+  stock: Number(product.stock_quantity) || 0,
+  availability: product.availability,
+  labels: Array.isArray(product.labels) ? product.labels : [],
+  specs: []
+});
+
 export const AppProvider = ({ children }) => {
   const [currentPage, setCurrentPage] = useState("home");
-  const [selectedProduct, setSelectedProduct] = useState(MOCK_PRODUCTS[0]);
+  const [products, setProducts] = useState([]);
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [productsError, setProductsError] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -284,15 +316,21 @@ export const AppProvider = ({ children }) => {
   
   // Storage States
   const [cart, setCart] = useState(() => {
-    const saved = localStorage.getItem("mystore_cart");
-    return saved ? JSON.parse(saved) : [
-      { product: MOCK_PRODUCTS[0], quantity: 1, selectedColor: "Matte Black", selectedSize: "Standard" }
-    ];
+    try {
+      const saved = localStorage.getItem("mystore_cart");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
-  
+
   const [wishlist, setWishlist] = useState(() => {
-    const saved = localStorage.getItem("mystore_wishlist");
-    return saved ? JSON.parse(saved) : [MOCK_PRODUCTS[1].id, MOCK_PRODUCTS[3].id];
+    try {
+      const saved = localStorage.getItem("mystore_wishlist");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
   const [orders, setOrders] = useState([
@@ -308,6 +346,25 @@ export const AppProvider = ({ children }) => {
   ]);
   const [activeOrder, setActiveOrder] = useState(null);
   const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
+
+  const loadProducts = async () => {
+    setProductsLoading(true);
+    setProductsError("");
+    try {
+      const result = await getProducts();
+      setProducts(result.map(mapApiProduct));
+    } catch (error) {
+      setProductsError(error instanceof Error ? error.message : "Failed to load products.");
+    } finally {
+      setProductsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProducts();
+  }, []);
+
+  const categories = [...new Set(products.map((product) => product.category).filter(Boolean))];
 
   // Sync LocalStorage
   useEffect(() => {
@@ -345,14 +402,28 @@ export const AppProvider = ({ children }) => {
     const chosenColor = color || (product.colors ? product.colors[0] : "");
     const chosenSize = size || (product.sizes ? product.sizes[0] : "");
 
+    if (product.availability && product.availability !== "available") {
+      triggerToast("This product is currently unavailable");
+      return;
+    }
+
     setCart((prevCart) => {
       const idx = prevCart.findIndex(
         (item) => item.product.id === product.id && item.selectedColor === chosenColor && item.selectedSize === chosenSize
       );
       if (idx > -1) {
         const next = [...prevCart];
-        next[idx].quantity += quantity;
+        const nextQuantity = next[idx].quantity + quantity;
+        if (product.stock > 0 && nextQuantity > product.stock) {
+          triggerToast("Requested quantity exceeds available stock");
+          return prevCart;
+        }
+        next[idx].quantity = nextQuantity;
         return next;
+      }
+      if (product.stock > 0 && quantity > product.stock) {
+        triggerToast("Requested quantity exceeds available stock");
+        return prevCart;
       }
       return [...prevCart, { product, quantity, selectedColor: chosenColor, selectedSize: chosenSize }];
     });
@@ -366,6 +437,13 @@ export const AppProvider = ({ children }) => {
       if (newQty <= 0) {
         next.splice(index, 1);
       } else {
+        const item = next[index];
+        if (delta > 0 && item.product.stock > 0 && newQty > item.product.stock) {
+          return prev;
+        }
+        if (delta > 0 && item.product.availability && item.product.availability !== "available") {
+          return prev;
+        }
         next[index].quantity = newQty;
       }
       return next;
@@ -396,6 +474,11 @@ export const AppProvider = ({ children }) => {
     <AppContext.Provider
       value={{
         currentPage,
+        products,
+        categories,
+        productsLoading,
+        productsError,
+        retryProducts: loadProducts,
         navigateTo,
         selectedProduct,
         selectedCategory,
@@ -497,9 +580,11 @@ const ProductCard = ({ product }) => {
         <div className="space-y-1">
           <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium">
             <span>{product.brand}</span>
-            <span className="flex items-center gap-0.5 text-amber-500 font-bold">
-              <Star className="w-3 h-3 fill-current" /> {product.rating}
-            </span>
+            {product.rating != null && (
+              <span className="flex items-center gap-0.5 text-amber-500 font-bold">
+                <Star className="w-3 h-3 fill-current" /> {product.rating}
+              </span>
+            )}
           </div>
           <h3
             onClick={() => navigateTo("product-detail", product)}
@@ -523,7 +608,8 @@ const ProductCard = ({ product }) => {
 
           <button
             onClick={() => addToCart(product)}
-            className="w-full py-2 bg-slate-900 dark:bg-slate-100 hover:bg-orange-600 dark:hover:bg-orange-500 text-white dark:text-slate-900 hover:text-white dark:hover:text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+            disabled={product.availability && product.availability !== "available"}
+            className="w-full py-2 bg-slate-900 dark:bg-slate-100 hover:bg-orange-600 dark:hover:bg-orange-500 text-white dark:text-slate-900 hover:text-white dark:hover:text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <ShoppingCart className="w-3.5 h-3.5" /> Add to Cart
           </button>
@@ -680,7 +766,7 @@ const BottomNavigation = () => {
 
 // --- A. HOME PAGE ---
 const HomePage = () => {
-  const { navigateTo, setSelectedCategory } = useApp();
+  const { navigateTo, setSelectedCategory, products, categories, productsLoading, productsError, retryProducts } = useApp();
 
   return (
     <div className="space-y-10 pb-12">
@@ -717,20 +803,20 @@ const HomePage = () => {
           </button>
         </div>
         <div className="flex items-center gap-4 overflow-x-auto pb-2 scrollbar-none">
-          {MOCK_CATEGORIES.map((cat) => (
+          {categories.map((category) => (
             <button
-              key={cat.id}
+              key={category}
               onClick={() => {
-                setSelectedCategory(cat.name);
+                setSelectedCategory(category);
                 navigateTo("category");
               }}
               className="flex flex-col items-center gap-2 group flex-shrink-0"
             >
               <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-800 group-hover:border-orange-500 transition-all shadow-sm">
-                <img src={cat.banner} alt={cat.name} className="w-full h-full object-cover rounded-xl group-hover:scale-110 transition-transform duration-300" />
+                <img src={MOCK_CATEGORIES.find((item) => item.name === category)?.banner || "https://placehold.co/240x240?text=Category"} alt={category} className="w-full h-full object-cover rounded-xl group-hover:scale-110 transition-transform duration-300" />
               </div>
               <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 group-hover:text-orange-600">
-                {cat.name}
+                {category}
               </span>
             </button>
           ))}
@@ -780,7 +866,14 @@ const HomePage = () => {
           </button>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {MOCK_PRODUCTS.slice(0, 4).map((p) => (
+          {productsLoading ? (
+            <ProductGridSkeleton count={4} />
+          ) : productsError ? (
+            <div className="col-span-full text-sm text-red-600">
+              {productsError}{" "}
+              <button onClick={retryProducts} className="font-bold underline">Try again</button>
+            </div>
+          ) : products.slice(0, 4).map((p) => (
             <ProductCard key={p.id} product={p} />
           ))}
         </div>
@@ -791,14 +884,14 @@ const HomePage = () => {
 
 // --- B. CATEGORY & PRODUCT LISTING PAGE ---
 const ProductListingPage = () => {
-  const { selectedCategory, setSelectedCategory, navigateTo } = useApp();
-  const [sortBy, setSortBy] = useState("popular");
-  const [priceRange, setPriceRange] = useState(5000000);
-
-  const filtered = MOCK_PRODUCTS.filter((p) => {
+  const { selectedCategory, setSelectedCategory, navigateTo, products, categories, searchQuery, productsLoading, productsError, retryProducts } = useApp();
+  const filtered = products.filter((p) => {
     const catMatch = selectedCategory === "All" || p.category === selectedCategory;
-    const priceMatch = p.price <= priceRange;
-    return catMatch && priceMatch;
+    const query = searchQuery.trim().toLowerCase();
+    const searchMatch = !query || [p.name, p.brand, p.category].some((value) =>
+      String(value || "").toLowerCase().includes(query)
+    );
+    return catMatch && searchMatch;
   });
 
   return (
@@ -813,7 +906,7 @@ const ProductListingPage = () => {
 
         {/* Categories Chips */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-          {["All", ...MOCK_CATEGORIES.map((c) => c.name)].map((cat) => (
+          {["All", ...categories].map((cat) => (
             <button
               key={cat}
               onClick={() => setSelectedCategory(cat)}
@@ -830,13 +923,19 @@ const ProductListingPage = () => {
       </div>
 
       {/* Grid Content */}
-      {filtered.length === 0 ? (
+      {productsLoading ? (
+        <ProductGridSkeleton count={8} />
+      ) : productsError ? (
+        <div className="text-center py-16 text-sm text-red-600">
+          <p>{productsError}</p>
+          <button onClick={retryProducts} className="mt-3 font-bold underline">Try again</button>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="text-center py-16 bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-3">
           <p className="text-sm text-slate-500">No products found matching filters.</p>
           <button
             onClick={() => {
               setSelectedCategory("All");
-              setPriceRange(5000000);
             }}
             className="px-4 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-xl text-xs font-bold"
           >
@@ -856,14 +955,25 @@ const ProductListingPage = () => {
 
 // --- C. PRODUCT DETAIL PAGE ---
 const ProductDetailPage = () => {
-  const { selectedProduct, addToCart, navigateTo, toggleWishlist, wishlist } = useApp();
-  const product = selectedProduct || MOCK_PRODUCTS[0];
+  const { selectedProduct, products, addToCart, navigateTo, toggleWishlist, wishlist } = useApp();
+  const product = selectedProduct || products[0] || MOCK_PRODUCTS[0];
   const [selectedImg, setSelectedImg] = useState(product.images[0]);
   const [selectedColor, setSelectedColor] = useState(product.colors ? product.colors[0] : "");
   const [selectedSize, setSelectedSize] = useState(product.sizes ? product.sizes[0] : "");
   const [qty, setQty] = useState(1);
 
+  useEffect(() => {
+    setSelectedImg(product.images[0]);
+    setSelectedColor(product.colors?.[0] || "");
+    setSelectedSize(product.sizes?.[0] || "");
+    setQty(1);
+  }, [product.id]);
+
   const isWishlisted = wishlist.includes(product.id);
+
+  if (!selectedProduct && products.length === 0) {
+    return <div className="py-16 text-center text-sm text-slate-500">Product details are unavailable.</div>;
+  }
 
   return (
     <div className="space-y-8 pb-20">
@@ -905,13 +1015,23 @@ const ProductDetailPage = () => {
               {product.name}
             </h1>
             <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
-              <span className="flex items-center gap-1 text-amber-500 font-bold">
-                <Star className="w-4 h-4 fill-current" /> {product.rating}
+              {product.rating != null && (
+                <>
+                  <span className="flex items-center gap-1 text-amber-500 font-bold">
+                    <Star className="w-4 h-4 fill-current" /> {product.rating}
+                  </span>
+                  <span>•</span>
+                </>
+              )}
+              {product.reviewCount != null && (
+                <>
+                  <span>{product.reviewCount} verified reviews</span>
+                  <span>•</span>
+                </>
+              )}
+              <span className={product.availability === "available" ? "text-emerald-600 font-bold" : "text-red-600 font-bold"}>
+                {product.availability === "available" ? `In Stock (${product.stock})` : "Out of Stock"}
               </span>
-              <span>•</span>
-              <span>{product.reviewCount} verified reviews</span>
-              <span>•</span>
-              <span className="text-emerald-600 font-bold">In Stock ({product.stock})</span>
             </div>
           </div>
 
@@ -961,7 +1081,11 @@ const ProductDetailPage = () => {
                   <Minus className="w-4 h-4" />
                 </button>
                 <span className="px-4 font-bold text-xs">{qty}</span>
-                <button onClick={() => setQty(qty + 1)} className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg">
+                <button
+                  onClick={() => setQty(Math.min(product.stock || qty + 1, qty + 1))}
+                  disabled={(product.availability && product.availability !== "available") || (product.stock > 0 && qty >= product.stock)}
+                  className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg disabled:opacity-40"
+                >
                   <Plus className="w-4 h-4" />
                 </button>
               </div>
@@ -972,7 +1096,8 @@ const ProductDetailPage = () => {
           <div className="flex gap-3 pt-4">
             <button
               onClick={() => addToCart(product, qty, selectedColor, selectedSize)}
-              className="flex-1 py-3.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl shadow-lg shadow-orange-500/30 transition-all text-xs sm:text-sm flex items-center justify-center gap-2"
+              disabled={product.availability && product.availability !== "available"}
+              className="flex-1 py-3.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl shadow-lg shadow-orange-500/30 transition-all text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <ShoppingCart className="w-4 h-4" /> Add to Shopping Cart
             </button>
@@ -995,14 +1120,16 @@ const ProductDetailPage = () => {
 
 // --- D. WISHLIST PAGE ---
 const WishlistPage = () => {
-  const { wishlist, navigateTo } = useApp();
-  const wishlistedProducts = MOCK_PRODUCTS.filter((p) => wishlist.includes(p.id));
+  const { wishlist, navigateTo, products, productsLoading } = useApp();
+  const wishlistedProducts = products.filter((p) => wishlist.includes(p.id));
 
   return (
     <div className="space-y-6 pb-12">
       <h1 className="text-2xl font-black text-slate-900 dark:text-white">My Saved Wishlist</h1>
 
-      {wishlistedProducts.length === 0 ? (
+      {productsLoading ? (
+        <ProductGridSkeleton count={4} />
+      ) : wishlistedProducts.length === 0 ? (
         <div className="text-center py-16 bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-3">
           <Heart className="w-12 h-12 text-slate-300 mx-auto" />
           <p className="text-sm text-slate-500">Your wishlist is currently empty.</p>
