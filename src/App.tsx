@@ -437,6 +437,13 @@ export const AppProvider = ({ children }) => {
       if (newQty <= 0) {
         next.splice(index, 1);
       } else {
+        const item = next[index];
+        if (delta > 0 && item.product.stock > 0 && newQty > item.product.stock) {
+          return prev;
+        }
+        if (delta > 0 && item.product.availability && item.product.availability !== "available") {
+          return prev;
+        }
         next[index].quantity = newQty;
       }
       return next;
@@ -953,6 +960,13 @@ const ProductDetailPage = () => {
   const [selectedSize, setSelectedSize] = useState(product.sizes ? product.sizes[0] : "");
   const [qty, setQty] = useState(1);
 
+  useEffect(() => {
+    setSelectedImg(product.images[0]);
+    setSelectedColor(product.colors?.[0] || "");
+    setSelectedSize(product.sizes?.[0] || "");
+    setQty(1);
+  }, [product.id]);
+
   const isWishlisted = wishlist.includes(product.id);
 
   if (!selectedProduct && products.length === 0) {
@@ -1057,7 +1071,11 @@ const ProductDetailPage = () => {
                   <Minus className="w-4 h-4" />
                 </button>
                 <span className="px-4 font-bold text-xs">{qty}</span>
-                <button onClick={() => setQty(qty + 1)} className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg">
+                <button
+                  onClick={() => setQty(Math.min(product.stock || qty + 1, qty + 1))}
+                  disabled={(product.availability && product.availability !== "available") || (product.stock > 0 && qty >= product.stock)}
+                  className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg disabled:opacity-40"
+                >
                   <Plus className="w-4 h-4" />
                 </button>
               </div>
@@ -1068,7 +1086,8 @@ const ProductDetailPage = () => {
           <div className="flex gap-3 pt-4">
             <button
               onClick={() => addToCart(product, qty, selectedColor, selectedSize)}
-              className="flex-1 py-3.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl shadow-lg shadow-orange-500/30 transition-all text-xs sm:text-sm flex items-center justify-center gap-2"
+              disabled={product.availability && product.availability !== "available"}
+              className="flex-1 py-3.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl shadow-lg shadow-orange-500/30 transition-all text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <ShoppingCart className="w-4 h-4" /> Add to Shopping Cart
             </button>
@@ -1091,14 +1110,16 @@ const ProductDetailPage = () => {
 
 // --- D. WISHLIST PAGE ---
 const WishlistPage = () => {
-  const { wishlist, navigateTo } = useApp();
-  const wishlistedProducts = MOCK_PRODUCTS.filter((p) => wishlist.includes(p.id));
+  const { wishlist, navigateTo, products, productsLoading } = useApp();
+  const wishlistedProducts = products.filter((p) => wishlist.includes(p.id));
 
   return (
     <div className="space-y-6 pb-12">
       <h1 className="text-2xl font-black text-slate-900 dark:text-white">My Saved Wishlist</h1>
 
-      {wishlistedProducts.length === 0 ? (
+      {productsLoading ? (
+        <ProductGridSkeleton count={4} />
+      ) : wishlistedProducts.length === 0 ? (
         <div className="text-center py-16 bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 space-y-3">
           <Heart className="w-12 h-12 text-slate-300 mx-auto" />
           <p className="text-sm text-slate-500">Your wishlist is currently empty.</p>
