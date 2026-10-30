@@ -580,9 +580,11 @@ const ProductCard = ({ product }) => {
         <div className="space-y-1">
           <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium">
             <span>{product.brand}</span>
-            <span className="flex items-center gap-0.5 text-amber-500 font-bold">
-              <Star className="w-3 h-3 fill-current" /> {product.rating}
-            </span>
+            {product.rating != null && (
+              <span className="flex items-center gap-0.5 text-amber-500 font-bold">
+                <Star className="w-3 h-3 fill-current" /> {product.rating}
+              </span>
+            )}
           </div>
           <h3
             onClick={() => navigateTo("product-detail", product)}
@@ -1013,12 +1015,20 @@ const ProductDetailPage = () => {
               {product.name}
             </h1>
             <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
-              <span className="flex items-center gap-1 text-amber-500 font-bold">
-                <Star className="w-4 h-4 fill-current" /> {product.rating}
-              </span>
-              <span>•</span>
-              <span>{product.reviewCount} verified reviews</span>
-              <span>•</span>
+              {product.rating != null && (
+                <>
+                  <span className="flex items-center gap-1 text-amber-500 font-bold">
+                    <Star className="w-4 h-4 fill-current" /> {product.rating}
+                  </span>
+                  <span>•</span>
+                </>
+              )}
+              {product.reviewCount != null && (
+                <>
+                  <span>{product.reviewCount} verified reviews</span>
+                  <span>•</span>
+                </>
+              )}
               <span className={product.availability === "available" ? "text-emerald-600 font-bold" : "text-red-600 font-bold"}>
                 {product.availability === "available" ? `In Stock (${product.stock})` : "Out of Stock"}
               </span>
