@@ -1,0 +1,8 @@
+{
+  "name": "Single React E-Commerce App",
+  "description": "Modern full-featured e-commerce shopping experience with product discovery, cart, wishlist, categories, and checkout.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
